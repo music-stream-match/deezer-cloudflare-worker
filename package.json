@@ -1,0 +1,20 @@
+{
+  "name": "deezer-proxy",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker proxy for Deezer gw-light.php API",
+  "main": "src/index.ts",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "test": "vitest",
+    "cf-typegen": "wrangler types",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.19",
+    "typescript": "^5.5.2",
+    "vitest": "~3.2.0",
+    "wrangler": "^4.45.4"
+  }
+}
