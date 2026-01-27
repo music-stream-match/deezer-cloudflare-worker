@@ -1,6 +1,25 @@
 name = "deezer-proxy"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2025-11-05"
+
+routes = [
+    { pattern = "deezer.music-stream-match.space", zone_name = "music-stream-match.space", custom_domain = true }
+]
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
 
 # Custom domain configuration
 # After deploying, add custom domain in Cloudflare Dashboard:
@@ -8,7 +27,7 @@ compatibility_date = "2024-01-01"
 # Add: deezer.music-stream-match.space
 
 [vars]
-ALLOWED_ORIGIN = "https://music-stream-match.space"
+ALLOWED_ORIGIN = "https://localhost-vite.mobulum.xyz"
 
 # For local development
 [env.development]

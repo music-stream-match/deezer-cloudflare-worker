@@ -1,11 +1,11 @@
 /**
  * Cloudflare Worker proxy for Deezer gw-light.php API
- * 
+ *
  * This worker handles:
  * - CORS headers for browser requests
  * - ARL cookie forwarding to Deezer
  * - API token management
- * 
+ *
  * Based on node-deezer-gw library approach
  */
 
@@ -33,10 +33,12 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 // CORS headers helper
 function corsHeaders(origin: string, allowedOrigin: string): HeadersInit {
   // Allow localhost for development
-  const isAllowed = origin === allowedOrigin || 
-                    origin.startsWith('http://localhost:') || 
-                    origin.startsWith('https://localhost');
-  
+  const isAllowed = origin === allowedOrigin ||
+      origin.startsWith('http://localhost:') ||
+      origin.startsWith('https://localhost') ||
+      origin.includes('music-stream-match.space');
+      origin.includes('localhost-vite.mobulum.xyz');
+
   return {
     'Access-Control-Allow-Origin': isAllowed ? origin : allowedOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -55,22 +57,19 @@ function handleOptions(request: Request, env: Env): Response {
 }
 
 // Make API call to Deezer
+// IMPORTANT: For the first call (getUserData), apiToken should be empty string
+// Deezer returns the real token in the response which we use for subsequent calls
 async function deezerApiCall(
-  method: string,
-  body: unknown | null,
-  arl: string,
-  apiToken: string | null,
-  params: Record<string, string> = {}
+    method: string,
+    body: unknown | null,
+    arl: string,
+    apiToken: string
 ): Promise<Response> {
   const url = new URL(DEEZER_GW_URL);
   url.searchParams.set('api_version', '1.0');
   url.searchParams.set('input', '3');
-  url.searchParams.set('api_token', apiToken || 'null');
+  url.searchParams.set('api_token', apiToken); // Empty string for first call
   url.searchParams.set('method', method);
-  
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, value);
-  }
 
   const fetchOptions: RequestInit = {
     method: body ? 'POST' : 'GET',
@@ -79,6 +78,8 @@ async function deezerApiCall(
       'Cookie': `arl=${arl}`,
       'Accept': 'application/json',
       'Content-Type': 'application/json',
+      'Origin': 'https://www.deezer.com',
+      'Referer': 'https://www.deezer.com/',
     },
   };
 
@@ -86,25 +87,36 @@ async function deezerApiCall(
     fetchOptions.body = JSON.stringify(body);
   }
 
+  console.log(`[Deezer API] Calling ${method} with token: ${apiToken ? apiToken.substring(0, 10) + '...' : '(empty)'}`);
+
   return fetch(url.toString(), fetchOptions);
 }
 
 // Get API token from user data
+// The first call to deezer.getUserData doesn't need a token
+// It returns checkForm which is the CSRF token for subsequent calls
 async function getApiToken(arl: string): Promise<{ token: string; userData: UserDataResults }> {
-  const response = await deezerApiCall('deezer.getUserData', null, arl, null);
+  console.log('[Deezer API] Getting API token via getUserData...');
+
+  // First call uses empty string as token
+  const response = await deezerApiCall('deezer.getUserData', null, arl, '');
   const data = await response.json() as DeezerApiResponse;
-  
+
+  console.log('[Deezer API] getUserData response:', JSON.stringify(data).substring(0, 500));
+
   if (!data.results) {
-    throw new Error('Failed to get user data');
+    throw new Error('Failed to get user data - no results');
   }
-  
+
   const results = data.results as UserDataResults;
   const token = results.checkForm;
-  
+
   if (!token) {
-    throw new Error('Could not get API token - invalid ARL?');
+    throw new Error('Could not get API token (checkForm) - invalid ARL?');
   }
-  
+
+  console.log(`[Deezer API] Got API token: ${token.substring(0, 10)}...`);
+
   return { token, userData: results };
 }
 
@@ -130,16 +142,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     if (path === '/init' || path === '/api/init') {
       // Initialize and get user data + API token
       const { token, userData } = await getApiToken(arl);
-      
+
       return new Response(JSON.stringify({
         success: true,
         apiToken: token,
         user: {
           id: userData.USER?.USER_ID?.toString() || '',
           name: userData.USER?.BLOG_NAME || 'Deezer User',
-          picture: userData.USER?.USER_PICTURE 
-            ? `https://e-cdns-images.dzcdn.net/images/user/${userData.USER.USER_PICTURE}/100x100-000000-80-0-0.jpg`
-            : undefined,
+          picture: userData.USER?.USER_PICTURE
+              ? `https://e-cdns-images.dzcdn.net/images/user/${userData.USER.USER_PICTURE}/100x100-000000-80-0-0.jpg`
+              : undefined,
         },
       }), {
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -153,7 +165,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         params?: unknown;
         apiToken?: string;
       };
-      
+
       if (!body.method) {
         return new Response(JSON.stringify({ error: 'Missing method parameter' }), {
           status: 400,
@@ -161,27 +173,23 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         });
       }
 
-      let apiToken = body.apiToken;
-      
-      // If no token provided, get one
-      if (!apiToken) {
-        const { token } = await getApiToken(arl);
-        apiToken = token;
-      }
+      // Always get fresh token for each request to avoid CSRF issues
+      const { token: apiToken } = await getApiToken(arl);
 
       const response = await deezerApiCall(body.method, body.params || null, arl, apiToken);
       const data = await response.json() as DeezerApiResponse;
 
-      // Check for token errors and retry
+      // Check for token errors and retry with fresh token
       if (data.error && !(data.error instanceof Array)) {
         const errorObj = data.error as Record<string, string>;
-        if (errorObj.GATEWAY_ERROR === 'invalid api token' || 
+        if (errorObj.GATEWAY_ERROR === 'invalid api token' ||
             errorObj.VALID_TOKEN_REQUIRED === 'Invalid CSRF token') {
+          console.log('[Deezer API] Token error, retrying with fresh token...');
           // Get fresh token and retry
           const { token: newToken } = await getApiToken(arl);
           const retryResponse = await deezerApiCall(body.method, body.params || null, arl, newToken);
           const retryData = await retryResponse.json();
-          
+
           return new Response(JSON.stringify(retryData), {
             headers: { ...cors, 'Content-Type': 'application/json' },
           });
@@ -193,33 +201,33 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       });
     }
 
-    // Convenience endpoints
+    // Convenience endpoints - all get fresh token first
     if (path === '/api/playlists' || path === '/playlists') {
       const { token } = await getApiToken(arl);
-      
+
       // Get user's playlists using pageProfile
       const userId = url.searchParams.get('userId');
-      
+
       if (!userId) {
         // First get user ID from userData
         const userDataResponse = await deezerApiCall('deezer.getUserData', null, arl, token);
         const userData = await userDataResponse.json() as DeezerApiResponse;
         const results = userData.results as UserDataResults;
         const actualUserId = results?.USER?.USER_ID;
-        
+
         if (!actualUserId) {
           return new Response(JSON.stringify({ error: 'Could not get user ID' }), {
             status: 400,
             headers: { ...cors, 'Content-Type': 'application/json' },
           });
         }
-        
+
         const response = await deezerApiCall('deezer.pageProfile', {
           user_id: actualUserId,
           tab: 'playlists',
           nb: 10000,
         }, arl, token);
-        
+
         const data = await response.json();
         return new Response(JSON.stringify(data), {
           headers: { ...cors, 'Content-Type': 'application/json' },
@@ -231,7 +239,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         tab: 'playlists',
         nb: 10000,
       }, arl, token);
-      
+
       const data = await response.json();
       return new Response(JSON.stringify(data), {
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -239,9 +247,76 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
 
     if (path.startsWith('/api/playlist/') || path.startsWith('/playlist/')) {
-      const playlistId = path.split('/').pop();
-      
-      if (!playlistId) {
+      // Check if it's a special endpoint or a playlist ID
+      const pathParts = path.split('/').filter(Boolean);
+      const lastPart = pathParts[pathParts.length - 1];
+
+      if (lastPart === 'create') {
+        // Create playlist
+        const body = await request.json() as {
+          title: string;
+          description?: string;
+          status?: 'public' | 'private' | 'collaborative';
+          songs?: string[];
+        };
+
+        if (!body.title) {
+          return new Response(JSON.stringify({ error: 'Missing title' }), {
+            status: 400,
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const { token } = await getApiToken(arl);
+        const statusIndex = ['public', 'private', 'collaborative'].indexOf(body.status || 'private');
+        const songs = (body.songs || []).map(id => [id, 0]);
+
+        const response = await deezerApiCall('playlist.create', {
+          title: body.title,
+          description: body.description || '',
+          status: statusIndex,
+          songs,
+        }, arl, token);
+
+        const data = await response.json();
+        return new Response(JSON.stringify(data), {
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (lastPart === 'addSongs') {
+        // Add songs to playlist
+        const body = await request.json() as {
+          playlistId: string;
+          songs: string[];
+        };
+
+        if (!body.playlistId || !body.songs) {
+          return new Response(JSON.stringify({ error: 'Missing playlistId or songs' }), {
+            status: 400,
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const { token } = await getApiToken(arl);
+        const songs = body.songs.map(id => [id, 0]);
+
+        const response = await deezerApiCall('playlist.addSongs', {
+          playlist_id: body.playlistId,
+          songs,
+          offset: -1,
+        }, arl, token);
+
+        const data = await response.json();
+        return new Response(JSON.stringify(data), {
+          headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Get playlist by ID
+      const playlistId = lastPart;
+
+      if (!playlistId || playlistId === 'playlist' || playlistId === 'api') {
         return new Response(JSON.stringify({ error: 'Missing playlist ID' }), {
           status: 400,
           headers: { ...cors, 'Content-Type': 'application/json' },
@@ -257,67 +332,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         tab: 0,
         header: true,
       }, arl, token);
-      
-      const data = await response.json();
-      return new Response(JSON.stringify(data), {
-        headers: { ...cors, 'Content-Type': 'application/json' },
-      });
-    }
 
-    if (path === '/api/playlist/create' || path === '/playlist/create') {
-      const body = await request.json() as {
-        title: string;
-        description?: string;
-        status?: 'public' | 'private' | 'collaborative';
-        songs?: string[];
-      };
-
-      if (!body.title) {
-        return new Response(JSON.stringify({ error: 'Missing title' }), {
-          status: 400,
-          headers: { ...cors, 'Content-Type': 'application/json' },
-        });
-      }
-
-      const { token } = await getApiToken(arl);
-      const statusIndex = ['public', 'private', 'collaborative'].indexOf(body.status || 'private');
-      const songs = (body.songs || []).map(id => [id, 0]);
-
-      const response = await deezerApiCall('playlist.create', {
-        title: body.title,
-        description: body.description || '',
-        status: statusIndex,
-        songs,
-      }, arl, token);
-      
-      const data = await response.json();
-      return new Response(JSON.stringify(data), {
-        headers: { ...cors, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (path === '/api/playlist/addSongs' || path === '/playlist/addSongs') {
-      const body = await request.json() as {
-        playlistId: string;
-        songs: string[];
-      };
-
-      if (!body.playlistId || !body.songs) {
-        return new Response(JSON.stringify({ error: 'Missing playlistId or songs' }), {
-          status: 400,
-          headers: { ...cors, 'Content-Type': 'application/json' },
-        });
-      }
-
-      const { token } = await getApiToken(arl);
-      const songs = body.songs.map(id => [id, 0]);
-
-      const response = await deezerApiCall('playlist.addSongs', {
-        playlist_id: body.playlistId,
-        songs,
-        offset: -1,
-      }, arl, token);
-      
       const data = await response.json();
       return new Response(JSON.stringify(data), {
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -345,7 +360,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         nb: limit,
         filter: 'ALL',
       }, arl, token);
-      
+
       const data = await response.json();
       return new Response(JSON.stringify(data), {
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -354,7 +369,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     if (path === '/api/track' || path === '/track') {
       const trackId = url.searchParams.get('id');
-      
+
       if (!trackId) {
         return new Response(JSON.stringify({ error: 'Missing track id parameter' }), {
           status: 400,
@@ -366,7 +381,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const response = await deezerApiCall('song.getData', {
         sng_id: trackId,
       }, arl, token);
-      
+
       const data = await response.json();
       return new Response(JSON.stringify(data), {
         headers: { ...cors, 'Content-Type': 'application/json' },
@@ -375,8 +390,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     // Health check
     if (path === '/' || path === '/health') {
-      return new Response(JSON.stringify({ 
-        status: 'ok', 
+      return new Response(JSON.stringify({
+        status: 'ok',
         service: 'deezer-proxy',
         endpoints: [
           'GET /init - Initialize and get user data',
@@ -400,8 +415,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   } catch (error) {
     console.error('Worker error:', error);
-    return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Internal server error' 
+    return new Response(JSON.stringify({
+      error: error instanceof Error ? error.message : 'Internal server error'
     }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
