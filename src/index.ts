@@ -37,6 +37,7 @@ function corsHeaders(origin: string, allowedOrigin: string): HeadersInit {
                     origin.startsWith('http://localhost:') ||
                     origin.startsWith('https://localhost') ||
                     origin.includes('music-stream-match.space') ||
+                    origin.includes('music-stream-match.mobulum.com') ||
                     origin.includes('localhost-vite.mobulum.xyz');
 
   return {
