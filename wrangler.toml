@@ -3,7 +3,6 @@ main = "src/index.ts"
 compatibility_date = "2025-11-05"
 
 routes = [
-    { pattern = "deezer.music-stream-match.space", zone_name = "music-stream-match.space", custom_domain = true },
     { pattern = "deezer.music-stream-match.mobulum.com", zone_name = "mobulum.com", custom_domain = true }
 ]
 
