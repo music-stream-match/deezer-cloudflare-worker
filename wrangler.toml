@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2025-11-05"
 
 routes = [
-    { pattern = "deezer.music-stream-match.mobulum.com", zone_name = "mobulum.com", custom_domain = true }
+    { pattern = "deezer.musica.mobulum.com", zone_name = "mobulum.com", custom_domain = true }
 ]
 
 [observability]
@@ -24,7 +24,7 @@ head_sampling_rate = 1
 # Custom domain configuration
 # After deploying, add custom domain in Cloudflare Dashboard:
 # Workers & Pages > deezer-proxy > Settings > Triggers > Custom Domains
-# Add: deezer.music-stream-match.mobulum.com
+# Add: deezer.musica.mobulum.com
 
 [vars]
 ALLOWED_ORIGIN = "https://localhost-vite.mobulum.xyz"

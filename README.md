@@ -22,7 +22,7 @@ Proxy server for Deezer's internal `gw-light.php` API, enabling browser-based ap
 
 4. Add custom domain in Cloudflare Dashboard:
    - Go to Workers & Pages > deezer-proxy > Settings > Triggers > Custom Domains
-   - Add: `deezer.music-stream-match.mobulum.com`
+   - Add: `deezer.musica.mobulum.com`
 
 ## Local Development
 

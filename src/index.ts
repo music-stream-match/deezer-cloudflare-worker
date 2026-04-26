@@ -36,8 +36,8 @@ function corsHeaders(origin: string, allowedOrigin: string): HeadersInit {
   const isAllowed = origin === allowedOrigin ||
                     origin.startsWith('http://localhost:') ||
                     origin.startsWith('https://localhost') ||
-                    origin.includes('music-stream-match.space') ||
-                    origin.includes('music-stream-match.mobulum.com') ||
+                    origin.includes('musica.space') ||
+                    origin.includes('musica.mobulum.com') ||
                     origin.includes('localhost-vite.mobulum.xyz');
 
   return {
