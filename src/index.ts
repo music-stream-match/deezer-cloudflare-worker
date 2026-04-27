@@ -131,7 +131,7 @@ async function initSession(arl: string): Promise<SessionState> {
   // First call with null token establishes session and returns CSRF token
   const { data, newCookies } = await deezerApiCall('deezer.getUserData', null, arl, null, []);
 
-  console.log('[Deezer API] getUserData response, cookies:', newCookies.length);
+  console.log('[Deezer API] getUserData response, cookies:', newCookies.length, 'data:', data);
 
   if (!data.results) {
     throw new Error('Failed to get user data - no results');
