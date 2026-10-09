@@ -1,6 +1,6 @@
 name = "deezer-proxy"
 main = "src/index.ts"
-compatibility_date = "2025-11-05"
+compatibility_date = "2026-08-22"
 
 routes = [
     { pattern = "deezer-musica.mobulum.com", zone_name = "mobulum.com", custom_domain = true }
